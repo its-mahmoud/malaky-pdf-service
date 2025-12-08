@@ -17,11 +17,8 @@ const app = express();
 app.use(bodyParser.json());
 app.use(cors());
 
-// 🗂 إنشاء مجلد الفواتير إذا لم يكن موجود
-const invoicesDir = path.resolve("./invoices");
-if (!fs.existsSync(invoicesDir)) {
-  fs.mkdirSync(invoicesDir);
-}
+
+
 
 
 /* ===========================
