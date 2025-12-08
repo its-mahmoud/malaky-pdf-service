@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/its-mahmoud/malaky-pdf-service#readme",
   "dependencies": {
+    "@supabase/supabase-js": "^2.86.2",
     "arabic-digits": "^1.1.0",
     "body-parser": "^2.2.1",
     "cors": "^2.8.5",
