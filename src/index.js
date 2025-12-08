@@ -5,11 +5,11 @@ import bodyParser from "body-parser";
 import { createInvoicePDF } from "./pdf.js";
 import cors from "cors";
 import fs from "fs";
-import path from "path";
 
 if (process.env.NODE_ENV !== "production") {
   dotenv.config();
 }
+
 // 🟦 Supabase Client باستخدام Service Key
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
@@ -17,29 +17,26 @@ const app = express();
 app.use(bodyParser.json());
 app.use(cors());
 
-
-
-
-
 /* ===========================
-   🔵 API اختباري يدوي 
-   /generate
+   🔵 API يدوي /generate
 =========================== */
 app.post("/generate", async (req, res) => {
   try {
     const order = req.body;
-    if (!order || !order.id)
+    if (!order || !order.id) {
       return res.status(400).json({ error: "Order data invalid" });
+    }
 
     const fileName = `invoice-${order.id}.pdf`;
-const filePath = `/tmp/${fileName}`;
+    const filePath = `/tmp/${fileName}`;
 
-await createInvoicePDF(order, filePath);
+    // 🖨️ إنشاء PDF
+    await createInvoicePDF(order, filePath);
 
-const fileData = fs.readFileSync(filePath);
-
+    // 📥 قراءة الملف المؤقت
     const fileData = fs.readFileSync(filePath);
 
+    // 📤 رفع إلى Supabase
     const upload = await supabase.storage
       .from("invoices")
       .upload(fileName, fileData, {
@@ -49,11 +46,14 @@ const fileData = fs.readFileSync(filePath);
 
     if (upload.error) throw upload.error;
 
+    // 🔗 استخراج الرابط
     const { data: publicURL } = supabase.storage
       .from("invoices")
       .getPublicUrl(fileName);
 
-    await supabase.from("orders")
+    // 💾 تحديث الطلب
+    await supabase
+      .from("orders")
       .update({ invoice_url: publicURL.publicUrl })
       .eq("id", order.id);
 
@@ -69,20 +69,15 @@ const fileData = fs.readFileSync(filePath);
   }
 });
 
-
 /* ===========================
-   📌 Webhook تلقائي من Supabase
-   /webhook
+   📌 Webhook تلقائي /webhook
 =========================== */
 app.post("/webhook", async (req, res) => {
-  // 🚫 امنع إنشاء فاتورة ثانية لنفس الطلب
-
-
   try {
-    const { record } = req.body; // Supabase sends { record: {...} }
+    const { record } = req.body;
     const orderId = record.id;
 
-    // تحقق من قاعدة البيانات للتأكيد
+    // 🚫 منع التكرار
     const { data: existingOrder } = await supabase
       .from("orders")
       .select("invoice_url")
@@ -90,32 +85,28 @@ app.post("/webhook", async (req, res) => {
       .single();
 
     if (existingOrder?.invoice_url) {
-      return res.json({ message: "Invoice already exists in DB, skipped." });
+      return res.json({ message: "Invoice already exists, skipped." });
     }
 
-    // فقط إذا كانت الحالة completed
+    // فقط إذا كانت completed
     if (record.status !== "completed") {
       return res.json({ message: "Ignored (Order not completed)" });
     }
 
-    // 🟦 1) جلب بيانات الطلب
+    // جلب كامل بيانات الطلب
     const { data: order } = await supabase
       .from("orders")
       .select("*")
       .eq("id", orderId)
       .single();
 
-    // 🟨 2) جلب عناصر الطلب
+    // جلب عناصر الطلب
     const { data: items } = await supabase
       .from("order_items")
-      .select(`
-    quantity,
-    unit_price,
-    menu_items (name)
-  `)
+      .select(`quantity, unit_price, menu_items(name)`)
       .eq("order_id", orderId);
 
-    // 🧾 3) تجهيز صيغة PDF
+    // تجهيز صيغة PDF
     const formatted = {
       id: order.id,
       customer: order.guest_customer_name ?? "زبون التطبيق",
@@ -123,34 +114,34 @@ app.post("/webhook", async (req, res) => {
       items: items.map(i => ({
         name: i.menu_items?.name ?? "صنف بدون اسم",
         qty: i.quantity,
-        price: Number(i.unit_price)
-      }))
+        price: Number(i.unit_price),
+      })),
     };
 
-    // 🖨️ 4) إنشاء PDF
     const fileName = `invoice-${order.id}.pdf`;
-    const fileName = `invoice-${order.id}.pdf`;
-const filePath = `/tmp/${fileName}`;
+    const filePath = `/tmp/${fileName}`;
 
-await createInvoicePDF(formatted, filePath);
+    // إنشاء PDF
+    await createInvoicePDF(formatted, filePath);
 
-const fileData = fs.readFileSync(filePath);
+    // رفع
+    const fileData = fs.readFileSync(filePath);
     const upload = await supabase.storage
       .from("invoices")
       .upload(fileName, fileData, {
         contentType: "application/pdf",
         upsert: true,
       });
-
     if (upload.error) throw upload.error;
 
-    // 🔗 6) استخراج الرابط
+    // رابط عام
     const { data: urlData } = supabase.storage
       .from("invoices")
       .getPublicUrl(fileName);
 
-    // 💾 7) تحديث الطلب
-    await supabase.from("orders")
+    // تحديث الطلب
+    await supabase
+      .from("orders")
       .update({ invoice_url: urlData.publicUrl })
       .eq("id", order.id);
 
@@ -165,7 +156,6 @@ const fileData = fs.readFileSync(filePath);
     res.status(500).json({ error: "Webhook failed" });
   }
 });
-
 
 // 🚀 تشغيل السيرفر
 app.listen(5000, "0.0.0.0", () => {
