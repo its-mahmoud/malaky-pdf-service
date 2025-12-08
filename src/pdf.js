@@ -1,111 +1,105 @@
 import PDFDocument from "pdfkit";
 import fs from "fs";
 import QRCode from "qrcode";
-import path from "path";
-import { fileURLToPath } from "url";
 
-import { createClient } from "@supabase/supabase-js";
-import dotenv from "dotenv";
-dotenv.config();
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+// 🟦 الخطوط (تأكد من وجود Cairo-Regular.ttf)
+const fontRegular = "assets/fonts/Cairo-Regular.ttf";
 
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// helper paths
-const fontPath = path.resolve(__dirname, "../assets/fonts/Cairo-Regular.ttf");
-const logoPath = path.resolve(__dirname, "../assets/logo/malaky.png");
-
+// 🟥 اللوجو (بدون كتابة تحته)
+const logoImage = "assets/logo/malaky.png";
 
 export async function createInvoicePDF(order, outputPath) {
-    const doc = new PDFDocument({ size: "A4", margin: 50 });
+  const doc = new PDFDocument({ size: "A4", margin: 30 });
+  doc.registerFont("Arabic", fontRegular);
 
-    doc.registerFont("Arabic", fontPath);
-    doc.image(logoPath, 50, 30, { width: 110 });
+  // ===== 🌤 خلفية بيضاء-رمادية (Soft Gray) =====
+  doc.rect(0, 0, doc.page.width, doc.page.height)
+    .fill("#f7f7f7");
 
-    // --- Title ---
-    doc.font("Arabic").fontSize(22).text("فاتورة طلب مطعم Malaky Broast Chicken", 0, 55, {
-        align: "center",
-    });
+  // ===== 🟥 رأس الفاتورة =====
+  doc.image(logoImage, doc.page.width / 2 - 70, 20, { width: 140 });
 
-    doc.moveDown(2);
+  // ===== 🔢 معلومات رقم الطلب والتاريخ =====
+  doc.fillColor("#000").font("Arabic").fontSize(13);
 
-    // --- Order Info ---
-    doc.fontSize(14).text(`رقم الطلب: ${order.id}`);
-    doc.text(`اسم العميل: ${order.customer}`);
-    doc.text(`تاريخ الطلب: ${order.date}`);
+  doc.roundedRect(40, 120, doc.page.width - 80, 70, 10)
+    .fill("#ffffff")
+    .stroke("#dddddd");
 
-    doc.moveDown(1);
+  doc.fillColor("#444").fontSize(14);
+  doc.text(`رقم الطلب: ${order.id}`, 60, 135, { align: "right" });
+  doc.text(`التاريخ: ${formatDate(order.date)}`, 60, 160, { align: "right" });
 
-    // --- Items Table ---
-    doc.fontSize(16).text("تفاصيل الطلب:", { underline: true });
-    doc.moveDown(0.5);
+  // ===== 🍗 جدول الأصناف =====
+  let yPos = 220;
+  doc.fontSize(14).fillColor("#000");
 
-    let total = 0;
-    order.items.forEach((item, i) => {
-        doc.fontSize(14).text(` - ${item.name}  |  ${item.qty} × ${item.price} ₪`);
-        total += item.qty * item.price;
-    });
+  doc.text("الصنف", 430, yPos);
+  doc.text("الكمية", 250, yPos);
+  doc.text("السعر", 130, yPos);
+  yPos += 5;
 
-    doc.moveDown(1);
+  doc.moveTo(40, yPos).lineTo(doc.page.width - 40, yPos).stroke("#999");
+  yPos += 15;
 
-    // --- Total ---
-    doc.fontSize(18).text(`الإجمالي: ${total} ₪`, { align: "right" });
+  let total = 0;
+  order.items.forEach((item) => {
+    doc.text(item.name, 420, yPos, { width: 180, align: "right" });
+    doc.text(item.qty, 260, yPos, { width: 40, align: "center" });
+    doc.text(`${item.price} ₪`, 120, yPos, { width: 80, align: "center" });
 
-    // --- Amount in Words ---
-    doc.moveDown(0.3);
-    doc.fontSize(14).text(`المبلغ كتابةً: ${convertNumberToArabicWords(total)} شيكل`, {
-        align: "right",
-    });
+    total += item.qty * item.price;
+    yPos += 25;
+  });
 
-    // --- QR Code ---
-    const qrData = await QRCode.toDataURL(`order:${order.id}`);
-    doc.image(qrData, 450, 620, { width: 110 });
+  // ===== 💰 الإجمالي =====
+  yPos += 10;
+  doc.fontSize(16).fillColor("#000");
+  doc.text(`الإجمالي الكلي: ${total} ₪`, 40, yPos, { align: "right" });
 
-    // --- Footer Message ---
-    doc.fontSize(12).text("شكراً لاختياركم Malaky ❤️", 0, 760, { align: "center" });
+  // ===== 🔢 المبلغ كتابة =====
+  yPos += 25;
+  doc.fontSize(12).fillColor("#444");
+  doc.text(`المبلغ كتابةً: ${convertNumberToArabicWords(total)} شيكل`, 40, yPos, {
+    align: "right",
+  });
 
-    // --- Save File ---
-    doc.pipe(fs.createWriteStream(outputPath));
-    doc.end();
+  // ===== 📌 QR Code =====
+  const qrData = await QRCode.toDataURL(`order:${order.id}`);
+  doc.image(qrData, 50, doc.page.height - 190, { width: 100 });
+
+  // ===== 🧾 Footer =====
+  doc.fontSize(12).fillColor("#444");
+  doc.text("شكراً لاختياركم مطعم ملكي بروست 🍗👑", 0, doc.page.height - 70, {
+    align: "center",
+  });
+  doc.text("للـسـؤالـت: 1700250250", 0, doc.page.height - 50, {
+    align: "center",
+  });
+
+  // ===== 💾 حفظ الملف =====
+  doc.pipe(fs.createWriteStream(outputPath));
+  doc.end();
+}
+
+
+// =============================
+// 🔢 تحويل الأرقام إلى كتابة
+// =============================
+function convertNumberToArabicWords(num) {
+  const n = require("number-to-words");
+  const words = n.toWords(num);
+  return words.replace(/-/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
 }
 
 // =============================
-// 🔵 Function Convert Number
+// 📆 تنسيق التاريخ
 // =============================
-
-// ملاحظة: يمكن تطويرها لاحقاً لتكون أكثر دقة
-function convertNumberToArabicWords(number) {
-    const words = [
-        "صفر", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة",
-        "ستة", "سبعة", "ثمانية", "تسعة", "عشرة", "أحد عشر",
-        "اثنا عشر", "ثلاثة عشر", "أربعة عشر", "خمسة عشر",
-        "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر", "عشرون"
-    ];
-
-    if (number <= 20) return words[number];
-    return number.toString(); // مؤقتًا حتى نوسعها لاحقًا
-}
-
-export async function generateAndUploadInvoice(order) {
-  const fileName = `invoice-${order.id}.pdf`;
-  const outputPath = `./invoices/${fileName}`;
-
-  await createInvoicePDF(order, outputPath);
-
-  const fileData = fs.readFileSync(outputPath);
-
-  const upload = await supabase.storage
-    .from("invoices")
-    .upload(fileName, fileData, {
-      contentType: "application/pdf",
-      upsert: true,
-    });
-
-  const { data } = supabase.storage
-    .from("invoices")
-    .getPublicUrl(fileName);
-
-  return data.publicUrl;
+function formatDate(dateString) {
+  const d = new Date(dateString);
+  return d.toLocaleDateString("ar-EG", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 }

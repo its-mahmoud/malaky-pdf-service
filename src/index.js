@@ -70,13 +70,22 @@ app.post("/generate", async (req, res) => {
 =========================== */
 app.post("/webhook", async (req, res) => {
   // 🚫 امنع إنشاء فاتورة ثانية لنفس الطلب
-if (record.invoice_url !== null && record.invoice_url !== "") {
-  return res.json({ message: "Invoice already exists, skipped." });
-}
+
 
   try {
     const { record } = req.body; // Supabase sends { record: {...} }
     const orderId = record.id;
+
+    // تحقق من قاعدة البيانات للتأكيد
+    const { data: existingOrder } = await supabase
+      .from("orders")
+      .select("invoice_url")
+      .eq("id", orderId)
+      .single();
+
+    if (existingOrder?.invoice_url) {
+      return res.json({ message: "Invoice already exists in DB, skipped." });
+    }
 
     // فقط إذا كانت الحالة completed
     if (record.status !== "completed") {
@@ -92,25 +101,25 @@ if (record.invoice_url !== null && record.invoice_url !== "") {
 
     // 🟨 2) جلب عناصر الطلب
     const { data: items } = await supabase
-  .from("order_items")
-  .select(`
+      .from("order_items")
+      .select(`
     quantity,
     unit_price,
     menu_items (name)
   `)
-  .eq("order_id", orderId);
+      .eq("order_id", orderId);
 
     // 🧾 3) تجهيز صيغة PDF
     const formatted = {
-  id: order.id,
-  customer: order.guest_customer_name ?? "زبون التطبيق",
-  date: order.created_at,
-  items: items.map(i => ({
-    name: i.menu_items?.name ?? "صنف بدون اسم",
-    qty: i.quantity,
-    price: Number(i.unit_price)
-  }))
-};
+      id: order.id,
+      customer: order.guest_customer_name ?? "زبون التطبيق",
+      date: order.created_at,
+      items: items.map(i => ({
+        name: i.menu_items?.name ?? "صنف بدون اسم",
+        qty: i.quantity,
+        price: Number(i.unit_price)
+      }))
+    };
 
     // 🖨️ 4) إنشاء PDF
     const fileName = `invoice-${order.id}.pdf`;
