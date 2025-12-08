@@ -7,8 +7,9 @@ import cors from "cors";
 import fs from "fs";
 import path from "path";
 
-dotenv.config();
-
+if (process.env.NODE_ENV !== "production") {
+  dotenv.config();
+}
 // 🟦 Supabase Client باستخدام Service Key
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
