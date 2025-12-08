@@ -35,9 +35,11 @@ app.post("/generate", async (req, res) => {
       return res.status(400).json({ error: "Order data invalid" });
 
     const fileName = `invoice-${order.id}.pdf`;
-    const filePath = path.resolve(`./invoices/${fileName}`);
+const filePath = `/tmp/${fileName}`;
 
-    await createInvoicePDF(order, filePath);
+await createInvoicePDF(order, filePath);
+
+const fileData = fs.readFileSync(filePath);
 
     const fileData = fs.readFileSync(filePath);
 
@@ -130,11 +132,12 @@ app.post("/webhook", async (req, res) => {
 
     // 🖨️ 4) إنشاء PDF
     const fileName = `invoice-${order.id}.pdf`;
-    const filePath = `./invoices/${fileName}`;
-    await createInvoicePDF(formatted, filePath);
+    const fileName = `invoice-${order.id}.pdf`;
+const filePath = `/tmp/${fileName}`;
 
-    // 📤 5) رفع PDF
-    const fileData = fs.readFileSync(filePath);
+await createInvoicePDF(formatted, filePath);
+
+const fileData = fs.readFileSync(filePath);
     const upload = await supabase.storage
       .from("invoices")
       .upload(fileName, fileData, {
