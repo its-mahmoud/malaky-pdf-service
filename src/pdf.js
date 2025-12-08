@@ -4,6 +4,12 @@ import QRCode from "qrcode";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { createClient } from "@supabase/supabase-js";
+import dotenv from "dotenv";
+dotenv.config();
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -80,4 +86,26 @@ function convertNumberToArabicWords(number) {
 
     if (number <= 20) return words[number];
     return number.toString(); // مؤقتًا حتى نوسعها لاحقًا
+}
+
+export async function generateAndUploadInvoice(order) {
+  const fileName = `invoice-${order.id}.pdf`;
+  const outputPath = `./invoices/${fileName}`;
+
+  await createInvoicePDF(order, outputPath);
+
+  const fileData = fs.readFileSync(outputPath);
+
+  const upload = await supabase.storage
+    .from("invoices")
+    .upload(fileName, fileData, {
+      contentType: "application/pdf",
+      upsert: true,
+    });
+
+  const { data } = supabase.storage
+    .from("invoices")
+    .getPublicUrl(fileName);
+
+  return data.publicUrl;
 }
