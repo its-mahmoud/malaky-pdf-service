@@ -21,6 +21,8 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.86.2",
     "arabic-digits": "^1.1.0",
+    "arabic-reshaper": "^1.1.0",
+    "bidi-js": "^1.0.3",
     "body-parser": "^2.2.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
