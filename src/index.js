@@ -12,10 +12,12 @@ if (process.env.NODE_ENV !== "production") {
 
 // 🟦 Supabase Client
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+const localMode = process.env.NODE_ENV !== "production";
 
 const app = express();
 app.use(bodyParser.json());
 app.use(cors());
+
 
 /* ===========================
    🔵 Manual API: /generate
@@ -28,25 +30,20 @@ app.post("/generate", async (req, res) => {
       return res.status(400).json({ error: "Order data invalid" });
     }
 
-    // 🔎 Prevent duplicate
-    const { data: existingOrder } = await supabase
-      .from("orders")
-      .select("invoice_url")
-      .eq("id", order.id)
-      .single();
+    const fileName = `invoice-${order.id}.pdf`;
+    const filePath = `./invoices/${fileName}`;
 
-    if (existingOrder?.invoice_url) {
+    // 🖨️ Generate PDF locally
+    await createInvoicePDF(order, filePath);
+
+    // 🔵 Development Mode → Save locally ONLY
+    if (localMode) {
       return res.json({
-        message: "Invoice already exists, skipped.",
-        pdf_url: existingOrder.invoice_url,
+        message: "Invoice generated locally (DEV MODE)",
+        pdf_path: filePath,
+        order_id: order.id,
       });
     }
-
-    const fileName = `invoice-${order.id}.pdf`;
-    const filePath = `/tmp/${fileName}`;
-
-    // 🖨️ Generate PDF
-    await createInvoicePDF(order, filePath);
 
     // 📥 Read file
     const fileData = fs.readFileSync(filePath);
@@ -61,12 +58,10 @@ app.post("/generate", async (req, res) => {
 
     if (upload.error) throw upload.error;
 
-    // 🔗 Get public URL
     const { data: publicURL } = supabase.storage
       .from("invoices")
       .getPublicUrl(fileName);
 
-    // 💾 Update order with invoice_url
     await supabase
       .from("orders")
       .update({ invoice_url: publicURL.publicUrl })
@@ -84,6 +79,8 @@ app.post("/generate", async (req, res) => {
   }
 });
 
+
+
 /* ===========================
    📌 Webhook: /webhook
 =========================== */
@@ -92,59 +89,39 @@ app.post("/webhook", async (req, res) => {
     const { record } = req.body;
     const orderId = record.id;
 
-    // 🚫 Ignore if not completed
     if (record.status !== "completed") {
       return res.json({ message: "Ignored (Order not completed)" });
     }
 
-    // 🚫 Prevent duplicate
-    const { data: existingOrder } = await supabase
-      .from("orders")
-      .select("invoice_url")
-      .eq("id", orderId)
-      .single();
+    const fileName = `invoice-${orderId}.pdf`;
+    const filePath = `./invoices/${fileName}`;
 
-    if (existingOrder?.invoice_url) {
-      return res.json({ message: "Invoice already exists, skipped." });
-    }
-
-    // 📌 Get order details
-    const { data: order } = await supabase
-      .from("orders")
-      .select("*")
-      .eq("id", orderId)
-      .single();
-
-    // 📌 Get order items
-    const { data: items } = await supabase
-      .from("order_items")
-      .select(`quantity, unit_price, menu_items(name)`)
-      .eq("order_id", orderId);
-
-    // Format data for PDF
+    // 🖨️ Generate temporary data
     const formatted = {
-      id: order.id,
-      customer: order.guest_customer_name ?? "زبون التطبيق",
-      date: order.created_at,
-      phone: order.guest_phone ?? "-",
-      address: order.user_address_id ? order.user_address_id.toString() : "-",
-      items: items.map(i => ({
-        name: i.menu_items?.name ?? "صنف بدون اسم",
-        qty: i.quantity,
-        price: Number(i.unit_price),
-      })),
+      id: record.id,
+      customer: record.guest_customer_name ?? "زبون التطبيق",
+      date: record.created_at,
+      phone: record.guest_phone ?? "-",
+      address: record.user_address_id ? record.user_address_id.toString() : "-",
+      items: [], // You can fetch items if needed in dev mode
     };
 
-    const fileName = `invoice-${order.id}.pdf`;
-    const filePath = `/tmp/${fileName}`;
-
-    // 🖨️ Generate PDF
+    // 🖨️ Generate PDF locally
     await createInvoicePDF(formatted, filePath);
 
-    // 📥 Read file
+    // 🔵 Development Mode → Save locally ONLY
+    if (localMode) {
+      return res.json({
+        message: "Invoice generated locally (DEV MODE)",
+        pdf_path: filePath,
+        order_id: orderId,
+      });
+    }
+
+    // --- Production Mode ----
+
     const fileData = fs.readFileSync(filePath);
 
-    // 📤 Upload to Supabase
     const upload = await supabase.storage
       .from("invoices")
       .upload(fileName, fileData, {
@@ -154,21 +131,19 @@ app.post("/webhook", async (req, res) => {
 
     if (upload.error) throw upload.error;
 
-    // 🔗 Public URL
     const { data: urlData } = supabase.storage
       .from("invoices")
       .getPublicUrl(fileName);
 
-    // 💾 Update order
     await supabase
       .from("orders")
       .update({ invoice_url: urlData.publicUrl })
-      .eq("id", order.id);
+      .eq("id", orderId);
 
     res.json({
       message: "Invoice created automatically 🚀",
       pdf_url: urlData.publicUrl,
-      order_id: order.id,
+      order_id: orderId,
     });
 
   } catch (err) {
@@ -176,6 +151,7 @@ app.post("/webhook", async (req, res) => {
     res.status(500).json({ error: "Webhook failed" });
   }
 });
+
 
 // 🚀 Server Listen
 app.listen(5000, "0.0.0.0", () => {
