@@ -4,7 +4,7 @@ import QRCode from "qrcode";
 import arabicReshaper from "arabic-reshaper";
 import bidi from "bidi-js";
 
-// 🛠️ إصلاح النص العربي مع bidi
+// 🛠️ إصلاح النص العربي
 function fixArabic(text) {
   if (!text || typeof text !== "string") return "";
   try {
@@ -15,7 +15,7 @@ function fixArabic(text) {
   }
 }
 
-// 💰 تنسيق المبلغ
+// 💰 تنسيق المبالغ
 function money(amount) {
   return fixArabic(`${Number(amount).toFixed(2)} شيكل`);
 }
@@ -30,7 +30,9 @@ export async function createInvoicePDF(order, outputPath) {
       const doc = new PDFDocument({
         size: "A4",
         margin: 40,
-        info: { Title: fixArabic("فاتورة طلب مطعم ملكي بروست") },
+        info: {
+          Title: "فاتورة طلب مطعم ملكي بروست",
+        },
       });
 
       const stream = fs.createWriteStream(outputPath);
@@ -43,14 +45,16 @@ export async function createInvoicePDF(order, outputPath) {
       // ========= 🔺 الهيدر =========
       try {
         doc.image(logoImage, doc.page.width / 2 - 35, 30, { width: 70 });
-      } catch {}
+      } catch {
+        console.log("Logo not found");
+      }
 
       doc
         .fontSize(20)
         .fillColor(primaryColor)
-        .text(fixArabic("فاتورة طلب مطعم ملكي بروست"), {
+        .text(fixArabic("بروست ملكي مَطعم طَلَب فاتورة"), 0, 115, {
           align: "center",
-          features: ["rtla"],
+          features: ['rtla'],
         });
 
       doc.moveDown(1);
@@ -59,14 +63,14 @@ export async function createInvoicePDF(order, outputPath) {
       const paymentMethod =
         order.payment_method ?? fixArabic("دفع عند الاستلام");
 
-      // ========= 📌 البيانات الأساسية =========
+      // ========= 📌 معلومات الفاتورة =========
       field(doc, "رقم الطلب", order.id ?? "-");
       field(doc, "التاريخ", createdAt);
       field(doc, "طريقة الدفع", paymentMethod);
 
       doc.moveDown(0.8);
 
-      // ========= 👤 بيانات العميل =========
+      // ========= 👤 معلومات العميل =========
       title(doc, "بيانات العميل");
 
       const customer =
@@ -83,15 +87,15 @@ export async function createInvoicePDF(order, outputPath) {
 
       // ========= 🍗 تفاصيل الأصناف =========
       title(doc, "تفاصيل الطلب");
-      doc.moveDown(0.3);
 
+      doc.moveDown(0.3);
       tableHeader(doc, ["الصنف", "الكمية", "السعر", "الإجمالي"]);
 
       let total = 0;
 
       if (Array.isArray(order.items) && order.items.length > 0) {
         order.items.forEach((item) => {
-          const name = item.name ?? "صنف";
+          const name = item.name ?? "صنف بدون اسم";
           const qty = Number(item.qty ?? item.quantity ?? 1);
           const price = Number(item.price ?? item.unit_price ?? 0);
           const rowTotal = qty * price;
@@ -111,7 +115,7 @@ export async function createInvoicePDF(order, outputPath) {
           .text(fixArabic("لا توجد أصناف في هذا الطلب."), {
             align: "right",
             width: doc.page.width - 80,
-            features: ["rtla"],
+            features: ['rtla'],
           });
       }
 
@@ -131,29 +135,32 @@ export async function createInvoicePDF(order, outputPath) {
           .text(fixArabic(`ملاحظات الطلب: ${order.notes}`), {
             align: "right",
             width: doc.page.width - 80,
-            features: ["rtla"],
+            features: ['rtla'],
           });
       }
 
       // ========= 🔳 QR =========
       try {
-        const qr = await QRCode.toDataURL(`order:${order.id ?? ""}`);
+        const qrData = `order:${order.id ?? ""}`;
+        const qr = await QRCode.toDataURL(qrData);
         const size = 90;
         const qrX = 50;
-        const qrY = doc.page.height - size - 140;
-        doc.image(qr, qrX, qrY, { width: size, height: size });
+        const qrY = doc.page.height - size - 140; // ثابت
 
+        doc.image(qr, qrX, qrY, { width: size, height: size });
         doc
           .fontSize(9)
           .fillColor("#555")
           .text(fixArabic("امسح للتحقق من تفاصيل الطلب"), qrX, qrY + size + 5, {
             width: size + 10,
             align: "center",
-            features: ["rtla"],
+            features: ['rtla'],
           });
-      } catch {}
+      } catch {
+        console.log("QR failed");
+      }
 
-      // ========= 🖊️ التوقيع =========
+      // ========= 🖊️ الختم والتوقيع =========
       const signY = doc.page.height - 160;
       doc
         .fontSize(12)
@@ -161,7 +168,7 @@ export async function createInvoicePDF(order, outputPath) {
         .text(fixArabic("الختم والتوقيع:"), doc.page.width - 260, signY, {
           width: 200,
           align: "right",
-          features: ["rtla"],
+          features: ['rtla'],
         });
 
       // ========= 🦶 الفوتر =========
@@ -171,17 +178,17 @@ export async function createInvoicePDF(order, outputPath) {
         .fillColor(primaryColor)
         .text(fixArabic("شكراً لاختياركم مطعم ملكي بروست!"), 0, footerY, {
           align: "center",
-          features: ["rtla"],
+          features: ['rtla'],
         });
-
       doc
         .fontSize(9)
         .fillColor("#555")
         .text(fixArabic("لطلباتكم: 1700250250"), 0, footerY + 18, {
           align: "center",
-          features: ["rtla"],
+          features: ['rtla']
         });
 
+      // إنهاء الـ PDF
       doc.end();
       stream.on("finish", resolve);
       stream.on("error", reject);
@@ -191,16 +198,17 @@ export async function createInvoicePDF(order, outputPath) {
   });
 }
 
-// ==================== 📌 دوال مساعدة ====================
+// ========== دوال مساعدة للتنسيق ==========
 
 function field(doc, label, value) {
   doc
     .fontSize(11)
     .fillColor("#333")
-    .text(fixArabic(`${label}: ${value}`), {
+    .text(fixArabic(`${label}: ${value}`), 0, doc.y, {
       align: "right",
       width: doc.page.width - 80,
-      features: ["rtla"],
+       features: ['rtla'],
+
     });
 }
 
@@ -208,10 +216,10 @@ function title(doc, text) {
   doc
     .fontSize(14)
     .fillColor("#000")
-    .text(fixArabic(text), {
+    .text(fixArabic(text), 0, doc.y, {
       align: "right",
       width: doc.page.width - 80,
-      features: ["rtla"],
+      features: ['rtla'],
     });
 }
 
@@ -234,14 +242,15 @@ function tableRow(doc, cols) {
 function printRow(doc, cols, isHeader) {
   const colWidths = [200, 60, 80, 90];
   let x = doc.page.width - 40;
+  const y = doc.y;
 
   cols.forEach((col, i) => {
     const w = colWidths[i];
     x -= w;
-    doc.text(i === 0 ? fixArabic(col) : col, x, doc.y, {
+    doc.text(isHeader ? fixArabic(col) : i < 1 ? fixArabic(col) : col, x, y, {
       width: w,
       align: "center",
-      features: i === 0 ? ["rtla"] : undefined,
+      features: ['rtla'],
     });
   });
 
@@ -250,10 +259,10 @@ function printRow(doc, cols, isHeader) {
 
 function totalField(doc, label, total) {
   const text = fixArabic(`${label}: ${total.toFixed(2)} شيكل`);
-  doc.fontSize(13).fillColor(primaryColor).text(text, {
+  doc.fontSize(13).fillColor(primaryColor).text(text, 0, doc.y, {
     align: "right",
     width: doc.page.width - 80,
-    features: ["rtla"],
+    features: ['rtla'],
   });
 }
 
