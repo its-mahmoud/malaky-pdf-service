@@ -30,9 +30,7 @@ export async function createInvoicePDF(order, outputPath) {
       const doc = new PDFDocument({
         size: "A4",
         margin: 40,
-        info: {
-          Title: "فاتورة طلب مطعم ملكي بروست",
-        },
+        info: { Title: "فاتورة طلب مطعم ملكي بروست" },
       });
 
       const stream = fs.createWriteStream(outputPath);
@@ -45,14 +43,11 @@ export async function createInvoicePDF(order, outputPath) {
       // ========= 🔺 الهيدر =========
       try {
         doc.image(logoImage, doc.page.width / 2 - 35, 30, { width: 70 });
-      } catch {
-        console.log("Logo not found");
-      }
-
+      } catch {}
       doc
         .fontSize(20)
         .fillColor(primaryColor)
-        .text(fixArabic("بروست ملكي مَطعم طَلَب فاتورة"), 0, 115, {
+        .text(fixArabic("فاتورة طلب مطعم ملكي بروست"), 0, 115, {
           align: "center",
         });
 
@@ -69,7 +64,7 @@ export async function createInvoicePDF(order, outputPath) {
 
       doc.moveDown(0.8);
 
-      // ========= 👤 معلومات العميل =========
+      // ========= 👤 بيانات العميل =========
       title(doc, "بيانات العميل");
 
       const customer =
@@ -91,7 +86,6 @@ export async function createInvoicePDF(order, outputPath) {
       tableHeader(doc, ["الصنف", "الكمية", "السعر", "الإجمالي"]);
 
       let total = 0;
-
       if (Array.isArray(order.items) && order.items.length > 0) {
         order.items.forEach((item) => {
           const name = item.name ?? "صنف بدون اسم";
@@ -99,13 +93,13 @@ export async function createInvoicePDF(order, outputPath) {
           const price = Number(item.price ?? item.unit_price ?? 0);
           const rowTotal = qty * price;
           total += rowTotal;
-
           tableRow(doc, [
             name,
             qty.toString(),
             price.toFixed(2),
             rowTotal.toFixed(2),
           ]);
+          divider(doc, 0.2);
         });
       } else {
         doc
@@ -120,9 +114,39 @@ export async function createInvoicePDF(order, outputPath) {
       doc.moveDown(0.5);
       divider(doc);
 
-      // ========= 💰 الإجمالي =========
-      doc.moveDown(0.5);
-      totalField(doc, "الإجمالي الكلي", total);
+      // ========= 💰 الإجمالي مع ضريبة، خصم، توصيل =========
+      doc.moveDown(1);
+
+      // 💵 Subtotal
+      totalField(doc, "المجموع الفرعي", total);
+
+      // 🚖 Delivery Fee
+      if (order.delivery_fee) {
+        const delivery = Number(order.delivery_fee);
+        total += delivery;
+        totalField(doc, "رسوم التوصيل", delivery);
+      }
+
+      // 🎁 Discount
+      if (order.discount) {
+        const discount = Number(order.discount);
+        total -= discount;
+        totalField(doc, "الخصم", -discount);
+      }
+
+      // 💸 VAT Tax
+      if (order.tax_percent) {
+        const taxValue = (total * Number(order.tax_percent)) / 100;
+        total += taxValue;
+        totalField(doc, `الضريبة (${order.tax_percent}%)`, taxValue);
+      }
+
+      doc.moveDown(0.3);
+      divider(doc);
+      doc.moveDown(0.2);
+
+      // 💯 Final Total
+      totalFieldFinal(doc, "الإجمالي الكلي", total);
 
       // ========= 📝 ملاحظات =========
       if (order.notes) {
@@ -142,8 +166,7 @@ export async function createInvoicePDF(order, outputPath) {
         const qr = await QRCode.toDataURL(qrData);
         const size = 90;
         const qrX = 50;
-        const qrY = doc.page.height - size - 140; // ثابت
-
+        const qrY = doc.page.height - size - 140;
         doc.image(qr, qrX, qrY, { width: size, height: size });
         doc
           .fontSize(9)
@@ -152,9 +175,7 @@ export async function createInvoicePDF(order, outputPath) {
             width: size + 10,
             align: "center",
           });
-      } catch {
-        console.log("QR failed");
-      }
+      } catch {}
 
       // ========= 🖊️ الختم والتوقيع =========
       const signY = doc.page.height - 160;
@@ -181,7 +202,6 @@ export async function createInvoicePDF(order, outputPath) {
           align: "center",
         });
 
-      // إنهاء الـ PDF
       doc.end();
       stream.on("finish", resolve);
       stream.on("error", reject);
@@ -191,8 +211,9 @@ export async function createInvoicePDF(order, outputPath) {
   });
 }
 
-// ========== دوال مساعدة للتنسيق ==========
+// ==================== 📌 دوال مساعدة ====================
 
+// 🏷️ حقل نص
 function field(doc, label, value) {
   doc
     .fontSize(11)
@@ -203,6 +224,7 @@ function field(doc, label, value) {
     });
 }
 
+// 📌 عنوان
 function title(doc, text) {
   doc
     .fontSize(14)
@@ -213,47 +235,61 @@ function title(doc, text) {
     });
 }
 
-function divider(doc) {
-  const y = doc.y + 5;
-  doc.moveTo(40, y).lineTo(doc.page.width - 40, y).strokeColor("#DDDDDD").stroke();
-  doc.moveDown(0.5);
+// ─ـــــــ خط فاصل
+function divider(doc, space = 0.5) {
+  const y = doc.y + 2;
+  doc.moveTo(40, y).lineTo(doc.page.width - 40, y).strokeColor("#EEEEEE").stroke();
+  doc.moveDown(space);
 }
 
+// 🧾 رأس الجدول
 function tableHeader(doc, cols) {
   doc.fontSize(12).fillColor(primaryColor);
   printRow(doc, cols, true);
 }
 
+// 📦 صف في الجدول
 function tableRow(doc, cols) {
   doc.fontSize(11).fillColor("#333");
   printRow(doc, cols, false);
 }
 
+// 🔁 طباعة أعمدة الجدول
 function printRow(doc, cols, isHeader) {
-  const colWidths = [200, 60, 80, 90];
+  const colWidths = [200, 70, 90, 90];
   let x = doc.page.width - 40;
-  const y = doc.y;
-
   cols.forEach((col, i) => {
     const w = colWidths[i];
     x -= w;
-    doc.text(isHeader ? fixArabic(col) : i < 1 ? fixArabic(col) : col, x, y, {
+    doc.text(i === 0 ? fixArabic(col) : col, x, doc.y, {
       width: w,
       align: "center",
     });
   });
-
   doc.moveDown(1);
 }
 
-function totalField(doc, label, total) {
-  const text = fixArabic(`${label}: ${total.toFixed(2)} شيكل`);
-  doc.fontSize(13).fillColor(primaryColor).text(text, 0, doc.y, {
+// 💵 إجمالي عادي
+function totalField(doc, label, amount) {
+  const isDiscount = amount < 0;
+  const color = isDiscount ? "#2E7D32" : "#000";
+  const text = fixArabic(`${label}: ${Number(amount).toFixed(2)} شيكل`);
+  doc.fontSize(12).fillColor(color).text(text, 0, doc.y, {
     align: "right",
     width: doc.page.width - 80,
   });
 }
 
+// 💸 إجمالي نهائي
+function totalFieldFinal(doc, label, total) {
+  const text = fixArabic(`${label}: ${Number(total).toFixed(2)} شيكل`);
+  doc.fontSize(15).fillColor(primaryColor).text(text, 0, doc.y, {
+    align: "right",
+    width: doc.page.width - 80,
+  });
+}
+
+// 📆 تنسيق التاريخ
 function formatDate(date) {
   return new Date(date).toLocaleString("ar-EG", {
     year: "numeric",
