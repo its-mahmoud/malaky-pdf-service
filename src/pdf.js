@@ -15,14 +15,10 @@ function fixArabic(text) {
   }
 }
 
-// 💰 تنسيق المبالغ
-function money(amount) {
-  return fixArabic(`${Number(amount).toFixed(2)} شيكل`);
-}
-
 const fontRegular = "assets/fonts/Cairo-Regular.ttf";
 const logoImage = "assets/logo/malaky.png";
 const primaryColor = "#C62828";
+const softBackground = "#FAFAFA";
 
 export async function createInvoicePDF(order, outputPath) {
   return new Promise(async (resolve, reject) => {
@@ -38,13 +34,17 @@ export async function createInvoicePDF(order, outputPath) {
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
 
+      // 🎨 خلفية خفيفة
+      doc.rect(0, 0, doc.page.width, doc.page.height).fill(softBackground);
+      doc.fillColor("#000"); // نرجع للون النص الافتراضي
+
       // 🅰️ الخط
       doc.registerFont("Arabic", fontRegular);
       doc.font("Arabic");
 
       // ========= 🔺 الهيدر =========
       try {
-        doc.image(logoImage, doc.page.width / 2 - 35, 30, { width: 70 });
+        doc.image(logoImage, doc.page.width / 2 - 35, 35, { width: 70 });
       } catch {
         console.log("Logo not found");
       }
@@ -52,59 +52,71 @@ export async function createInvoicePDF(order, outputPath) {
       doc
         .fontSize(20)
         .fillColor(primaryColor)
-        .text(fixArabic("بروست ملكي مَطعم طَلَب فاتورة"), 0, 115, {
+        .text(fixArabic("فاتورة طلب مطعم ملكي بروست"), 0, 120, {
           align: "center",
-          features: ['rtla'],
+          features: ["rtla"],
         });
 
-      doc.moveDown(1);
+      doc.moveDown(0.5);
 
-      const createdAt = formatDate(order.date ?? order.created_at ?? new Date());
-      const paymentMethod =
-        order.payment_method ?? fixArabic("دفع عند الاستلام");
+      const createdAt = new Date(order.date ?? order.created_at ?? new Date());
+      const dateStr = createdAt.toLocaleDateString("ar-EG");
+      const timeStr = createdAt.toLocaleTimeString("ar-EG", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
 
-      // ========= 📌 معلومات الفاتورة =========
-      field(doc, "رقم الطلب", order.id ?? "-");
-      field(doc, "التاريخ", createdAt);
-      field(doc, "طريقة الدفع", paymentMethod);
-
-      doc.moveDown(0.8);
-
-      // ========= 👤 معلومات العميل =========
-      title(doc, "بيانات العميل");
-
-      const customer =
-        order.customer ?? order.guest_customer_name ?? "زبون التطبيق";
-      const phone = order.phone ?? order.guest_phone ?? "-";
-      const address = order.address ?? "لا يوجد عنوان";
-
-      field(doc, "اسم العميل", customer);
-      field(doc, "الهاتف", phone);
-      field(doc, "العنوان", address);
+      // ========= 📌 معلومات الفاتورة (رقم + تاريخ + وقت) =========
+      doc
+        .fontSize(11)
+        .fillColor("#333")
+        .text(
+          fixArabic(`رقم الفاتورة: ${order.id ?? "-"}`),
+          0,
+          doc.y,
+          {
+            align: "right",
+            width: doc.page.width - 80,
+            features: ["rtla"],
+          }
+        );
+      doc.text(
+        fixArabic(`التاريخ: ${dateStr}  |  الوقت: ${timeStr}`),
+        {
+          align: "right",
+          width: doc.page.width - 80,
+          features: ["rtla"],
+        }
+      );
 
       doc.moveDown(0.7);
-      divider(doc);
 
-      // ========= 🍗 تفاصيل الأصناف =========
+      // ========= 🍗 جدول تفاصيل الأصناف =========
       title(doc, "تفاصيل الطلب");
 
       doc.moveDown(0.3);
-      tableHeader(doc, ["الصنف", "الكمية", "السعر", "الإجمالي"]);
+      tableHeader(doc, ["الصنف", "الملاحظات", "السعر", "الكمية", "الإجمالي"]);
 
-      let total = 0;
+      let subtotal = 0;
 
       if (Array.isArray(order.items) && order.items.length > 0) {
         order.items.forEach((item) => {
           const name = item.name ?? "صنف بدون اسم";
+          const notes =
+            item.notes ??
+            item.note ??
+            item.description ??
+            "-";
           const qty = Number(item.qty ?? item.quantity ?? 1);
           const price = Number(item.price ?? item.unit_price ?? 0);
           const rowTotal = qty * price;
-          total += rowTotal;
+          subtotal += rowTotal;
 
           tableRow(doc, [
             name,
-            qty.toString(),
+            notes,
             price.toFixed(2),
+            qty.toString(),
             rowTotal.toFixed(2),
           ]);
         });
@@ -115,77 +127,179 @@ export async function createInvoicePDF(order, outputPath) {
           .text(fixArabic("لا توجد أصناف في هذا الطلب."), {
             align: "right",
             width: doc.page.width - 80,
-            features: ['rtla'],
+            features: ["rtla"],
           });
       }
 
       doc.moveDown(0.5);
       divider(doc);
 
-      // ========= 💰 الإجمالي =========
-      doc.moveDown(0.5);
-      totalField(doc, "الإجمالي الكلي", total);
+      // ========= 💰 قسم المجموع ========
 
-      // ========= 📝 ملاحظات =========
-      if (order.notes) {
-        doc.moveDown(0.8);
-        doc
-          .fontSize(11)
-          .fillColor("#333")
-          .text(fixArabic(`ملاحظات الطلب: ${order.notes}`), {
-            align: "right",
-            width: doc.page.width - 80,
-            features: ['rtla'],
-          });
+      const deliveryFee = Number(order.delivery_fee ?? 0);
+      const isDelivery =
+        order.order_type === "delivery" ||
+        order.type === "delivery" ||
+        order.is_delivery === true ||
+        deliveryFee > 0;
+
+      let totalToPay = subtotal;
+      if (isDelivery && deliveryFee > 0) {
+        totalToPay += deliveryFee;
       }
+
+      doc.moveDown(0.5);
+
+      // نحدد نقطة البداية للبلوكين (المبالغ + معلومات الزبون)
+      const sectionStartY = doc.y;
+
+      const pageWidth = doc.page.width;
+      const leftBlockX = 40;
+      const leftBlockWidth = pageWidth / 2 - 60;
+      const rightBlockX = pageWidth / 2;
+      const rightBlockWidth = pageWidth - rightBlockX - 40;
+
+      // 💰 البلوك الأيسر: المجموع
+      doc.fontSize(12).fillColor("#000");
+      doc.text(fixArabic("ملخص المبلغ"), leftBlockX, sectionStartY, {
+        width: leftBlockWidth,
+        align: "right",
+        features: ["rtla"],
+      });
+
+      let yAfterAmounts = doc.y;
+
+      doc.fontSize(11).fillColor("#333");
+      doc.text(
+        fixArabic(`المجموع الفرعي: ${subtotal.toFixed(2)} شيكل`),
+        leftBlockX,
+        yAfterAmounts,
+        {
+          width: leftBlockWidth,
+          align: "right",
+          features: ["rtla"],
+        }
+      );
+      yAfterAmounts = doc.y;
+
+      if (isDelivery && deliveryFee > 0) {
+        doc.text(
+          fixArabic(`رسوم التوصيل: ${deliveryFee.toFixed(2)} شيكل`),
+          leftBlockX,
+          yAfterAmounts,
+          {
+            width: leftBlockWidth,
+            align: "right",
+            features: ["rtla"],
+          }
+        );
+        yAfterAmounts = doc.y;
+      }
+
+      doc
+        .fontSize(12)
+        .fillColor(primaryColor)
+        .text(
+          fixArabic(`المبلغ للدفع: ${totalToPay.toFixed(2)} شيكل`),
+          leftBlockX,
+          yAfterAmounts + 2,
+          {
+            width: leftBlockWidth,
+            align: "right",
+            features: ["rtla"],
+          }
+        );
+      yAfterAmounts = doc.y;
+
+      // 👤 البلوك الأيمن: بيانات الزبون
+      const customerName =
+        order.customer ?? order.guest_customer_name ?? "زبون التطبيق";
+      const customerPhone = order.phone ?? order.guest_phone ?? "-";
+      const customerAddress = order.address ?? "لا يوجد عنوان";
+
+      const yStartRight = sectionStartY;
+
+      doc.fontSize(12).fillColor("#000");
+      doc.text(fixArabic("معلومات التواصل"), rightBlockX, yStartRight, {
+        width: rightBlockWidth,
+        align: "right",
+        features: ["rtla"],
+      });
+
+      doc.fontSize(11).fillColor("#333");
+      doc.text(
+        fixArabic(`اسم الزبون: ${customerName}`),
+        rightBlockX,
+        doc.y,
+        {
+          width: rightBlockWidth,
+          align: "right",
+          features: ["rtla"],
+        }
+      );
+      doc.text(
+        fixArabic(`رقم الهاتف: ${customerPhone}`),
+        rightBlockX,
+        doc.y,
+        {
+          width: rightBlockWidth,
+          align: "right",
+          features: ["rtla"],
+        }
+      );
+      doc.text(
+        fixArabic(`العنوان: ${customerAddress}`),
+        rightBlockX,
+        doc.y,
+        {
+          width: rightBlockWidth,
+          align: "right",
+          features: ["rtla"],
+        }
+      );
+
+      const yAfterCustomer = doc.y;
+
+      // نأخذ أكبر Y من البلوكين و نكمل منها
+      doc.y = Math.max(yAfterAmounts, yAfterCustomer) + 20;
 
       // ========= 🔳 QR =========
       try {
         const qrData = `order:${order.id ?? ""}`;
         const qr = await QRCode.toDataURL(qrData);
-        const size = 90;
+        const size = 80;
         const qrX = 50;
-        const qrY = doc.page.height - size - 140; // ثابت
+        const qrY = doc.page.height - size - 140;
 
         doc.image(qr, qrX, qrY, { width: size, height: size });
         doc
           .fontSize(9)
           .fillColor("#555")
-          .text(fixArabic("امسح للتحقق من تفاصيل الطلب"), qrX, qrY + size + 5, {
+          .text(fixArabic("امسح لمعرفة تفاصيل طلبك"), qrX, qrY + size + 5, {
             width: size + 10,
             align: "center",
-            features: ['rtla'],
+            features: ["rtla"],
           });
       } catch {
         console.log("QR failed");
       }
-
-      // ========= 🖊️ الختم والتوقيع =========
-      const signY = doc.page.height - 160;
-      doc
-        .fontSize(12)
-        .fillColor("#000")
-        .text(fixArabic("الختم والتوقيع:"), doc.page.width - 260, signY, {
-          width: 200,
-          align: "right",
-          features: ['rtla'],
-        });
 
       // ========= 🦶 الفوتر =========
       const footerY = doc.page.height - 70;
       doc
         .fontSize(11)
         .fillColor(primaryColor)
-        .text(fixArabic("شكراً لاختياركم مطعم ملكي بروست!"), 0, footerY, {
+        .text(fixArabic("شكراً لثقتكم بنا ❤️"), 0, footerY, {
           align: "center",
-          features: ['rtla'],
+          features: ["rtla"],
         });
+
       doc
         .fontSize(9)
         .fillColor("#555")
-        .text(fixArabic("لطلباتكم: 1700250250"), 0, footerY + 18, {
+        .text(fixArabic("مطعم ملكي بروست - لطـلباتكم: 1700250250"), 0, footerY + 18, {
           align: "center",
-          features: ['rtla']
+          features: ["rtla"],
         });
 
       // إنهاء الـ PDF
@@ -200,18 +314,6 @@ export async function createInvoicePDF(order, outputPath) {
 
 // ========== دوال مساعدة للتنسيق ==========
 
-function field(doc, label, value) {
-  doc
-    .fontSize(11)
-    .fillColor("#333")
-    .text(fixArabic(`${label}: ${value}`), 0, doc.y, {
-      align: "right",
-      width: doc.page.width - 80,
-       features: ['rtla'],
-
-    });
-}
-
 function title(doc, text) {
   doc
     .fontSize(14)
@@ -219,13 +321,17 @@ function title(doc, text) {
     .text(fixArabic(text), 0, doc.y, {
       align: "right",
       width: doc.page.width - 80,
-      features: ['rtla'],
+      features: ["rtla"],
     });
 }
 
 function divider(doc) {
   const y = doc.y + 5;
-  doc.moveTo(40, y).lineTo(doc.page.width - 40, y).strokeColor("#DDDDDD").stroke();
+  doc
+    .moveTo(40, y)
+    .lineTo(doc.page.width - 40, y)
+    .strokeColor("#DDDDDD")
+    .stroke();
   doc.moveDown(0.5);
 }
 
@@ -240,30 +346,27 @@ function tableRow(doc, cols) {
 }
 
 function printRow(doc, cols, isHeader) {
-  const colWidths = [200, 60, 80, 90];
+  // [الصنف, الملاحظات, السعر, الكمية, الإجمالي]
+  const colWidths = [180, 140, 70, 60, 80];
   let x = doc.page.width - 40;
-  const y = doc.y;
 
   cols.forEach((col, i) => {
     const w = colWidths[i];
     x -= w;
-    doc.text(isHeader ? fixArabic(col) : i < 1 ? fixArabic(col) : col, x, y, {
-      width: w,
-      align: "center",
-      features: ['rtla'],
-    });
+    const isArabic = i <= 1; // الصنف + الملاحظات
+    doc.text(
+      isArabic ? fixArabic(col) : col,
+      x,
+      doc.y,
+      {
+        width: w,
+        align: "center",
+        features: ["rtla"],
+      }
+    );
   });
 
   doc.moveDown(1);
-}
-
-function totalField(doc, label, total) {
-  const text = fixArabic(`${label}: ${total.toFixed(2)} شيكل`);
-  doc.fontSize(13).fillColor(primaryColor).text(text, 0, doc.y, {
-    align: "right",
-    width: doc.page.width - 80,
-    features: ['rtla'],
-  });
 }
 
 function formatDate(date) {
