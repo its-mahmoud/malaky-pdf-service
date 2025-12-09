@@ -4,162 +4,262 @@ import QRCode from "qrcode";
 import arabicReshaper from "arabic-reshaper";
 import bidi from "bidi-js";
 
-// 🔤 دالة لإصلاح النص العربي
-function ar(text) {
-  if (!text) return "";
-  return bidi.getEmbeddingLevels(arabicReshaper.reshape(text)).text;
+// 🛠️ إصلاح النص العربي
+function fixArabic(text) {
+  if (!text || typeof text !== "string") return "";
+  try {
+    const reshaped = arabicReshaper.reshape(text);
+    return bidi.getEmbeddingLevels(reshaped).text;
+  } catch {
+    return text;
+  }
 }
 
-// 💰 تنسيق الأرقام + العملة
-function money(num) {
-  return ar(`${Number(num).toFixed(2)} شيكل`);
+// 💰 تنسيق المبالغ
+function money(amount) {
+  return fixArabic(`${Number(amount).toFixed(2)} شيكل`);
 }
 
-// 📄 إنشاء الفاتورة
-export async function generateInvoice(order, saveToPath) {
+const fontRegular = "assets/fonts/Cairo-Regular.ttf";
+const logoImage = "assets/logo/malaky.png";
+const primaryColor = "#C62828";
+
+export async function createInvoicePDF(order, outputPath) {
   return new Promise(async (resolve, reject) => {
     try {
       const doc = new PDFDocument({
         size: "A4",
         margin: 40,
-        info: { Title: "فاتورة طلب مطعم ملكي بروست" },
+        info: {
+          Title: "فاتورة طلب مطعم ملكي بروست",
+        },
       });
 
-      const stream = fs.createWriteStream(saveToPath);
+      const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
 
-      // ========= 🅰️ إعداد الخطوط =========
-      const font = "assets/fonts/Cairo-Regular.ttf";
-      doc.registerFont("Arabic", font).font("Arabic");
+      // 🅰️ الخط
+      doc.registerFont("Arabic", fontRegular);
+      doc.font("Arabic");
 
-      // ========= 🔺 رأس الصفحة =========
-      try { doc.image("assets/logo/malaky.png", doc.page.width / 2 - 40, 30, { width: 80 }); } catch {}
+      // ========= 🔺 الهيدر =========
+      try {
+        doc.image(logoImage, doc.page.width / 2 - 35, 30, { width: 70 });
+      } catch {
+        console.log("Logo not found");
+      }
 
-      doc.fontSize(20).fillColor("#000")
-        .text(ar("فاتورة طلب مطعم ملكي بروست"), 0, 120, { align: "center" });
+      doc
+        .fontSize(20)
+        .fillColor(primaryColor)
+        .text(fixArabic("بروست ملكي مَطعم طَلَب فاتورة"), 0, 115, {
+          align: "center",
+        });
 
-      // معلومات الطلب
+      doc.moveDown(1);
+
       const createdAt = formatDate(order.date ?? order.created_at ?? new Date());
-      const payMethod = order.payment_method ?? "دفع عند الاستلام";
+      const paymentMethod =
+        order.payment_method ?? fixArabic("دفع عند الاستلام");
 
-      doc.moveDown(1);
-      field(`رقم الفاتورة`, order.id ?? "-");
-      field(`التاريخ`, createdAt);
-      field(`طريقة الدفع`, payMethod);
+      // ========= 📌 معلومات الفاتورة =========
+      field(doc, "رقم الطلب", order.id ?? "-");
+      field(doc, "التاريخ", createdAt);
+      field(doc, "طريقة الدفع", paymentMethod);
 
-      // ========= 👤 بيانات الزبون =========
-      doc.moveDown(1);
-      title("بيانات العميل");
-      field("الاسم", order.customer ?? order.guest_customer_name ?? "زبون التطبيق");
-      field("الهاتف", order.phone ?? order.guest_phone ?? "-");
-      field("العنوان", order.address ?? "لا يوجد عنوان");
+      doc.moveDown(0.8);
 
-      line();
+      // ========= 👤 معلومات العميل =========
+      title(doc, "بيانات العميل");
 
-      // ========= 🍗 أصناف الطلب =========
-      title("تفاصيل الطلب");
-      tableHeader(["الصنف", "الكمية", "السعر", "الإجمالي"]);
+      const customer =
+        order.customer ?? order.guest_customer_name ?? "زبون التطبيق";
+      const phone = order.phone ?? order.guest_phone ?? "-";
+      const address = order.address ?? "لا يوجد عنوان";
+
+      field(doc, "اسم العميل", customer);
+      field(doc, "الهاتف", phone);
+      field(doc, "العنوان", address);
+
+      doc.moveDown(0.7);
+      divider(doc);
+
+      // ========= 🍗 تفاصيل الأصناف =========
+      title(doc, "تفاصيل الطلب");
+
+      doc.moveDown(0.3);
+      tableHeader(doc, ["الصنف", "الكمية", "السعر", "الإجمالي"]);
 
       let total = 0;
 
-      if (Array.isArray(order.items)) {
+      if (Array.isArray(order.items) && order.items.length > 0) {
         order.items.forEach((item) => {
-          const name = item.name ?? "صنف";
+          const name = item.name ?? "صنف بدون اسم";
           const qty = Number(item.qty ?? item.quantity ?? 1);
           const price = Number(item.price ?? item.unit_price ?? 0);
           const rowTotal = qty * price;
           total += rowTotal;
-          tableRow([name, qty.toString(), money(price), money(rowTotal)]);
+
+          tableRow(doc, [
+            name,
+            qty.toString(),
+            price.toFixed(2),
+            rowTotal.toFixed(2),
+          ]);
         });
       } else {
-        doc.fontSize(11).fillColor("#666")
-          .text(ar("لا توجد أصناف"), { align: "right" });
+        doc
+          .fontSize(11)
+          .fillColor("#777")
+          .text(fixArabic("لا توجد أصناف في هذا الطلب."), {
+            align: "right",
+            width: doc.page.width - 80,
+          });
       }
 
-      line();
+      doc.moveDown(0.5);
+      divider(doc);
 
-      // ========= 💵 الإجمالي =========
-      totalField("الإجمالي الكلي", money(total));
+      // ========= 💰 الإجمالي =========
+      doc.moveDown(0.5);
+      totalField(doc, "الإجمالي الكلي", total);
 
       // ========= 📝 ملاحظات =========
       if (order.notes) {
-        doc.moveDown(0.5);
-        doc.fontSize(11).fillColor("#333")
-          .text(ar(`ملاحظات: ${order.notes}`), { align: "right" });
+        doc.moveDown(0.8);
+        doc
+          .fontSize(11)
+          .fillColor("#333")
+          .text(fixArabic(`ملاحظات الطلب: ${order.notes}`), {
+            align: "right",
+            width: doc.page.width - 80,
+          });
       }
 
-      // ========= 📌 QR =========
+      // ========= 🔳 QR =========
       try {
-        const qr = await QRCode.toDataURL(`order:${order.id}`);
-        doc.image(qr, 50, doc.page.height - 220, { width: 110 });
-      } catch {}
+        const qrData = `order:${order.id ?? ""}`;
+        const qr = await QRCode.toDataURL(qrData);
+        const size = 90;
+        const qrX = 50;
+        const qrY = doc.page.height - size - 140; // ثابت
 
-      // ========= 🖊️ ختم + توقيع =========
-      doc.fontSize(12).fillColor("#000")
-        .text(ar("الختم والتوقيع:"), doc.page.width - 250, doc.page.height - 160);
+        doc.image(qr, qrX, qrY, { width: size, height: size });
+        doc
+          .fontSize(9)
+          .fillColor("#555")
+          .text(fixArabic("امسح للتحقق من تفاصيل الطلب"), qrX, qrY + size + 5, {
+            width: size + 10,
+            align: "center",
+          });
+      } catch {
+        console.log("QR failed");
+      }
 
-      // ========= 🦶 Footer =========
-      doc.fontSize(10).fillColor("#C62828")
-        .text(ar("شكراً لاختياركم مطعم ملكي بروست!"), 0, doc.page.height - 60, { align: "center" });
+      // ========= 🖊️ الختم والتوقيع =========
+      const signY = doc.page.height - 160;
+      doc
+        .fontSize(12)
+        .fillColor("#000")
+        .text(fixArabic("الختم والتوقيع:"), doc.page.width - 260, signY, {
+          width: 200,
+          align: "right",
+        });
 
-      doc.fontSize(9).fillColor("#333")
-        .text(ar("لطلباتكم: 1700250250"), 0, doc.page.height - 40, { align: "center" });
+      // ========= 🦶 الفوتر =========
+      const footerY = doc.page.height - 70;
+      doc
+        .fontSize(11)
+        .fillColor(primaryColor)
+        .text(fixArabic("شكراً لاختياركم مطعم ملكي بروست!"), 0, footerY, {
+          align: "center",
+        });
+      doc
+        .fontSize(9)
+        .fillColor("#555")
+        .text(fixArabic("لطلباتكم: 1700250250"), 0, footerY + 18, {
+          align: "center",
+        });
 
+      // إنهاء الـ PDF
       doc.end();
       stream.on("finish", resolve);
       stream.on("error", reject);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
 
-      // ========= 📌 دوال مساعدة =========
+// ========== دوال مساعدة للتنسيق ==========
 
-      function field(label, value) {
-        doc.fontSize(11).fillColor("#333")
-          .text(ar(`${label}: ${value}`), { align: "right" });
-      }
+function field(doc, label, value) {
+  doc
+    .fontSize(11)
+    .fillColor("#333")
+    .text(fixArabic(`${label}: ${value}`), 0, doc.y, {
+      align: "right",
+      width: doc.page.width - 80,
+    });
+}
 
-      function title(text) {
-        doc.fontSize(14).fillColor("#000")
-          .text(ar(text), { align: "right" });
-      }
+function title(doc, text) {
+  doc
+    .fontSize(14)
+    .fillColor("#000")
+    .text(fixArabic(text), 0, doc.y, {
+      align: "right",
+      width: doc.page.width - 80,
+    });
+}
 
-      function line() {
-        doc.moveDown(0.2);
-        doc.moveTo(40, doc.y).lineTo(doc.page.width - 40, doc.y).stroke("#CCC");
-        doc.moveDown(0.3);
-      }
+function divider(doc) {
+  const y = doc.y + 5;
+  doc.moveTo(40, y).lineTo(doc.page.width - 40, y).strokeColor("#DDDDDD").stroke();
+  doc.moveDown(0.5);
+}
 
-      function tableHeader(cols) {
-        doc.fontSize(12).fillColor("#000");
-        printCols(cols, true);
-      }
+function tableHeader(doc, cols) {
+  doc.fontSize(12).fillColor(primaryColor);
+  printRow(doc, cols, true);
+}
 
-      function tableRow(cols) {
-        doc.fontSize(11).fillColor("#333");
-        printCols(cols, false);
-      }
+function tableRow(doc, cols) {
+  doc.fontSize(11).fillColor("#333");
+  printRow(doc, cols, false);
+}
 
-      function printCols(cols, bold) {
-        const widths = [200, 60, 100, 110];
-        let x = doc.page.width - 40;
-        cols.forEach((col, i) => {
-          const w = widths[i];
-          x -= w;
-          doc.text(ar(col), x, doc.y, { width: w, align: "center" });
-        });
-        doc.moveDown(1);
-      }
+function printRow(doc, cols, isHeader) {
+  const colWidths = [200, 60, 80, 90];
+  let x = doc.page.width - 40;
+  const y = doc.y;
 
-      function totalField(label, value) {
-        doc.fontSize(13).fillColor("#000")
-          .text(ar(`${label}: ${value}`), { align: "right" });
-      }
+  cols.forEach((col, i) => {
+    const w = colWidths[i];
+    x -= w;
+    doc.text(isHeader ? fixArabic(col) : i < 1 ? fixArabic(col) : col, x, y, {
+      width: w,
+      align: "center",
+    });
+  });
 
-      function formatDate(date) {
-        return new Date(date).toLocaleString("ar-EG", {
-          year: "numeric", month: "2-digit", day: "2-digit",
-          hour: "2-digit", minute: "2-digit",
-        });
-      }
+  doc.moveDown(1);
+}
 
-    } catch (err) { reject(err); }
+function totalField(doc, label, total) {
+  const text = fixArabic(`${label}: ${total.toFixed(2)} شيكل`);
+  doc.fontSize(13).fillColor(primaryColor).text(text, 0, doc.y, {
+    align: "right",
+    width: doc.page.width - 80,
+  });
+}
+
+function formatDate(date) {
+  return new Date(date).toLocaleString("ar-EG", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
