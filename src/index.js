@@ -17,6 +17,7 @@ const localMode = process.env.NODE_ENV !== "production";
 const app = express();
 app.use(bodyParser.json());
 app.use(cors());
+app.use("/invoices", express.static("./invoices"));
 
 
 /* ===========================
