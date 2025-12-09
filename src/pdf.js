@@ -9,7 +9,7 @@ writtenNumber.defaults.lang = "ar";
 // 🅰️ الخط (تأكد من وجوده داخل assets/fonts)
 const fontRegular = "assets/fonts/Cairo-Regular.ttf";
 
-// 🖼️ اللوجو
+// 🖼️ اsللوجو
 const logoImage = "assets/logo/malaky.png";
 
 export async function createInvoicePDF(order, outputPath) {
